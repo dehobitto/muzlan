@@ -22,7 +22,12 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	httpClient := &http.Client{Timeout: 20 * time.Second}
+	httpTimeout := cfg.PollTimeout + 10*time.Second
+	if httpTimeout < 10*time.Second {
+		httpTimeout = 10 * time.Second
+	}
+
+	httpClient := &http.Client{Timeout: httpTimeout}
 	bot := app.New(cfg, httpClient, log.Default())
 
 	if err := bot.Run(ctx); err != nil {
