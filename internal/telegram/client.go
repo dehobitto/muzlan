@@ -5,7 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 )
 
 const apiBaseURL = "https://api.telegram.org/bot"
@@ -39,6 +44,69 @@ func (c *Client) SendMessage(ctx context.Context, request SendMessageRequest) (M
 func (c *Client) EditMessageText(ctx context.Context, request EditMessageTextRequest) error {
 	var result Message
 	return c.post(ctx, "editMessageText", request, &result)
+}
+
+func (c *Client) SendAudio(ctx context.Context, request SendAudioRequest) (Message, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	if err := writer.WriteField("chat_id", strconv.FormatInt(request.ChatID, 10)); err != nil {
+		return Message{}, err
+	}
+	if request.Caption != "" {
+		if err := writer.WriteField("caption", request.Caption); err != nil {
+			return Message{}, err
+		}
+	}
+	if request.Title != "" {
+		if err := writer.WriteField("title", request.Title); err != nil {
+			return Message{}, err
+		}
+	}
+
+	file, err := os.Open(request.AudioPath)
+	if err != nil {
+		return Message{}, err
+	}
+	defer file.Close()
+
+	part, err := writer.CreateFormFile("audio", filepath.Base(request.AudioPath))
+	if err != nil {
+		return Message{}, err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return Message{}, err
+	}
+	if err := writer.Close(); err != nil {
+		return Message{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sendAudio", &body)
+	if err != nil {
+		return Message{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return Message{}, err
+	}
+	defer resp.Body.Close()
+
+	var payload response[json.RawMessage]
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return Message{}, err
+	}
+	if !payload.OK {
+		return Message{}, fmt.Errorf("telegram sendAudio failed: status %d: %s", payload.ErrorCode, payload.Description)
+	}
+
+	var result Message
+	if err := json.Unmarshal(payload.Result, &result); err != nil {
+		return Message{}, err
+	}
+
+	return result, nil
 }
 
 func (c *Client) post(ctx context.Context, method string, request any, result any) error {
@@ -97,6 +165,13 @@ type EditMessageTextRequest struct {
 	MessageID   int                   `json:"message_id"`
 	Text        string                `json:"text"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+type SendAudioRequest struct {
+	ChatID    int64
+	AudioPath string
+	Caption   string
+	Title     string
 }
 
 type InlineKeyboardMarkup struct {

@@ -27,3 +27,20 @@ func TestResultFromInfoUsesCreatorFallbacks(t *testing.T) {
 		t.Fatalf("unexpected label: %q", got.Label())
 	}
 }
+
+func TestIsYouTubeURL(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "https://www.youtube.com/watch?v=abc123", want: true},
+		{value: "https://youtu.be/abc123", want: true},
+		{value: "https://example.com/watch?v=abc123", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := IsYouTubeURL(tt.value); got != tt.want {
+			t.Fatalf("IsYouTubeURL(%q) = %v, want %v", tt.value, got, tt.want)
+		}
+	}
+}

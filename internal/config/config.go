@@ -12,9 +12,11 @@ import (
 
 type Config struct {
 	TelegramBotToken string
+	AdminUserIDs     map[int64]bool
 	YTDLPAutoInstall bool
 	SkipOldUpdates   bool
 	PollTimeout      time.Duration
+	DownloadTimeout  time.Duration
 	SearchTimeout    time.Duration
 	RetryCount       int
 	UserCooldown     time.Duration
@@ -33,9 +35,11 @@ func Load(envPath string) (Config, error) {
 
 	cfg := Config{
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
+		AdminUserIDs:     int64SetEnv("BOT_ADMIN_USER_IDS"),
 		YTDLPAutoInstall: boolEnv("BOT_YTDLP_AUTO_INSTALL", true),
 		SkipOldUpdates:   boolEnv("BOT_SKIP_OLD_UPDATES", true),
 		PollTimeout:      secondsEnv("BOT_POLL_TIMEOUT_SECONDS", 30),
+		DownloadTimeout:  secondsEnv("BOT_DOWNLOAD_TIMEOUT_SECONDS", 120),
 		SearchTimeout:    secondsEnv("BOT_SEARCH_TIMEOUT_SECONDS", 15),
 		RetryCount:       intEnv("BOT_RETRY_COUNT", 1),
 		UserCooldown:     secondsEnv("BOT_USER_COOLDOWN_SECONDS", 3),
@@ -67,6 +71,9 @@ func (c Config) Validate() error {
 	}
 	if c.SearchTimeout <= 0 {
 		return errors.New("BOT_SEARCH_TIMEOUT_SECONDS must be greater than 0")
+	}
+	if c.DownloadTimeout <= 0 {
+		return errors.New("BOT_DOWNLOAD_TIMEOUT_SECONDS must be greater than 0")
 	}
 	if c.UserCooldown < 0 {
 		return errors.New("BOT_USER_COOLDOWN_SECONDS cannot be negative")
@@ -138,4 +145,26 @@ func boolEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+func int64SetEnv(key string) map[int64]bool {
+	values := map[int64]bool{}
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return values
+	}
+
+	for _, part := range strings.Split(raw, ",") {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			continue
+		}
+		values[parsed] = true
+	}
+
+	return values
 }
