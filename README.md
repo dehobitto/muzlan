@@ -8,6 +8,7 @@ A Telegram bot for searching music links.
 - User sends a music search query.
 - Bot replies transparently while it works.
 - Bot returns up to 10 YouTube links as inline URL buttons.
+- Configured admins can send an authorized YouTube URL and receive an MP3 audio file.
 - Cache and per-user rate limiting are in memory for now.
 
 ## Configuration
@@ -15,7 +16,10 @@ A Telegram bot for searching music links.
 Fill in `.env`:
 
 - `TELEGRAM_BOT_TOKEN`: token from Telegram BotFather.
-- `BOT_YTDLP_AUTO_INSTALL`: set to `true` to let `go-ytdlp` install `yt-dlp` automatically when the bot starts.
+- `BOT_ADMIN_USER_IDS`: comma-separated Telegram user IDs allowed to convert authorized URLs to MP3.
+- `BOT_YTDLP_AUTO_INSTALL`: set to `true` to let `go-ytdlp` install `yt-dlp`, `ffmpeg`, and `ffprobe` automatically when the bot starts.
+
+MP3 conversion requires `ffmpeg` to be available to `yt-dlp`.
 
 ## Run
 

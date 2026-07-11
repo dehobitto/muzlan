@@ -29,12 +29,14 @@ func New(cfg config.Config, httpClient *http.Client, logger *log.Logger) *App {
 	limiter := ratelimit.NewPerUser(cfg.UserCooldown, time.Now)
 
 	handler := bot.NewHandler(bot.HandlerConfig{
-		QueryMinLength: cfg.QueryMinLength,
-		QueryMaxLength: cfg.QueryMaxLength,
-		ResultLimit:    cfg.ResultLimit,
-		SearchTimeout:  cfg.SearchTimeout,
-		RetryCount:     cfg.RetryCount,
-	}, telegramClient, searcher, limiter, logger)
+		QueryMinLength:  cfg.QueryMinLength,
+		QueryMaxLength:  cfg.QueryMaxLength,
+		ResultLimit:     cfg.ResultLimit,
+		SearchTimeout:   cfg.SearchTimeout,
+		DownloadTimeout: cfg.DownloadTimeout,
+		RetryCount:      cfg.RetryCount,
+		AdminUserIDs:    cfg.AdminUserIDs,
+	}, telegramClient, searcher, youtubeProvider, limiter, logger)
 
 	return &App{
 		cfg:     cfg,

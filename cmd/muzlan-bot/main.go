@@ -23,6 +23,9 @@ func main() {
 	}
 
 	httpTimeout := cfg.PollTimeout + 10*time.Second
+	if downloadTimeout := cfg.DownloadTimeout + 30*time.Second; downloadTimeout > httpTimeout {
+		httpTimeout = downloadTimeout
+	}
 	if httpTimeout < 10*time.Second {
 		httpTimeout = 10 * time.Second
 	}
