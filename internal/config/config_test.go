@@ -11,7 +11,7 @@ func TestLoadDotEnvDoesNotOverrideExistingEnv(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
-	err := os.WriteFile(path, []byte("TELEGRAM_BOT_TOKEN=from-file\nSPOTIFY_CLIENT_ID=id\nSPOTIFY_CLIENT_SECRET=secret\n"), 0o600)
+	err := os.WriteFile(path, []byte("TELEGRAM_BOT_TOKEN=from-file\nBOT_YTDLP_AUTO_INSTALL=false\n"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,8 +24,8 @@ func TestLoadDotEnvDoesNotOverrideExistingEnv(t *testing.T) {
 	if cfg.TelegramBotToken != "from-env" {
 		t.Fatalf("expected env value to win, got %q", cfg.TelegramBotToken)
 	}
-	if cfg.SpotifyClientID != "id" {
-		t.Fatalf("expected spotify client id from file, got %q", cfg.SpotifyClientID)
+	if cfg.YTDLPAutoInstall {
+		t.Fatal("expected ytdlp auto install to come from file")
 	}
 }
 

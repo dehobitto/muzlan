@@ -10,7 +10,6 @@ import (
 
 	"github.com/dehobitto/muzlan/internal/ratelimit"
 	"github.com/dehobitto/muzlan/internal/search"
-	"github.com/dehobitto/muzlan/internal/spotify"
 	"github.com/dehobitto/muzlan/internal/telegram"
 )
 
@@ -55,7 +54,7 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	if strings.HasPrefix(query, "/start") || strings.HasPrefix(query, "/help") {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
-			Text:   "Send a song name and I will search Spotify.",
+			Text:   "Send a song name and I will search YouTube links.",
 		})
 		return
 	}
@@ -86,36 +85,36 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 
 	status, err := h.client.SendMessage(ctx, telegram.SendMessageRequest{
 		ChatID: chatID,
-		Text:   "Got it. Searching Spotify...",
+		Text:   "Got it. Searching links...",
 	})
 	if err != nil {
 		h.logger.Printf("send status message: %v", err)
 		return
 	}
 
-	tracks, err := h.searchWithRetry(ctx, status.Chat.ID, status.MessageID, query)
+	results, err := h.searchWithRetry(ctx, status.Chat.ID, status.MessageID, query)
 	if err != nil {
 		h.editOrSend(ctx, status.Chat.ID, status.MessageID, errorMessage(err), nil)
 		return
 	}
 
-	if len(tracks) == 0 {
-		h.editOrSend(ctx, status.Chat.ID, status.MessageID, fmt.Sprintf("No Spotify results found for %q.", query), nil)
+	if len(results) == 0 {
+		h.editOrSend(ctx, status.Chat.ID, status.MessageID, fmt.Sprintf("No links found for %q.", query), nil)
 		return
 	}
 
 	text := fmt.Sprintf("Found results for %q:", query)
-	h.editOrSend(ctx, status.Chat.ID, status.MessageID, text, keyboardForTracks(tracks))
+	h.editOrSend(ctx, status.Chat.ID, status.MessageID, text, keyboardForResults(results))
 }
 
-func (h *Handler) searchWithRetry(ctx context.Context, chatID int64, messageID int, query string) ([]spotify.Track, error) {
+func (h *Handler) searchWithRetry(ctx context.Context, chatID int64, messageID int, query string) ([]search.Result, error) {
 	var lastErr error
 	for attempt := 0; attempt <= h.cfg.RetryCount; attempt++ {
 		searchCtx, cancel := context.WithTimeout(ctx, h.cfg.SearchTimeout)
-		tracks, err := h.searcher.Search(searchCtx, query, h.cfg.ResultLimit)
+		results, err := h.searcher.Search(searchCtx, query, h.cfg.ResultLimit)
 		cancel()
 		if err == nil {
-			return tracks, nil
+			return results, nil
 		}
 
 		lastErr = err
@@ -123,7 +122,7 @@ func (h *Handler) searchWithRetry(ctx context.Context, chatID int64, messageID i
 			break
 		}
 
-		h.editOrSend(ctx, chatID, messageID, "Spotify is slow. Retrying once...", nil)
+		h.editOrSend(ctx, chatID, messageID, "Search is slow. Retrying once...", nil)
 	}
 
 	return nil, lastErr
@@ -134,21 +133,11 @@ func shouldRetry(err error) bool {
 		return false
 	}
 
-	var rateLimited spotify.RateLimitedError
-	if errors.As(err, &rateLimited) {
-		return false
-	}
-
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || spotify.IsTemporary(err)
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || search.IsTemporary(err)
 }
 
 func errorMessage(err error) string {
-	var rateLimited spotify.RateLimitedError
-	if errors.As(err, &rateLimited) {
-		return "Spotify asked us to slow down. Try again shortly."
-	}
-
-	return "Could not search Spotify right now. Please try again in a minute."
+	return "Could not search links right now. Please try again in a minute."
 }
 
 func (h *Handler) editOrSend(ctx context.Context, chatID int64, messageID int, text string, markup *telegram.InlineKeyboardMarkup) {
@@ -172,12 +161,12 @@ func (h *Handler) editOrSend(ctx context.Context, chatID int64, messageID int, t
 	}
 }
 
-func keyboardForTracks(tracks []spotify.Track) *telegram.InlineKeyboardMarkup {
-	rows := make([][]telegram.InlineKeyboardButton, 0, len(tracks))
-	for i, track := range tracks {
+func keyboardForResults(results []search.Result) *telegram.InlineKeyboardMarkup {
+	rows := make([][]telegram.InlineKeyboardButton, 0, len(results))
+	for i, result := range results {
 		rows = append(rows, []telegram.InlineKeyboardButton{{
-			Text: fmt.Sprintf("%02d. %s", i+1, trimButtonText(track.Label(), 56)),
-			URL:  track.URL,
+			Text: fmt.Sprintf("%02d. %s", i+1, trimButtonText(result.Label(), 56)),
+			URL:  result.URL,
 		}})
 	}
 
