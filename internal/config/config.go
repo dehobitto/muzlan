@@ -11,18 +11,17 @@ import (
 )
 
 type Config struct {
-	TelegramBotToken    string
-	SpotifyClientID     string
-	SpotifyClientSecret string
-	SkipOldUpdates      bool
-	PollTimeout         time.Duration
-	SearchTimeout       time.Duration
-	RetryCount          int
-	UserCooldown        time.Duration
-	CacheTTL            time.Duration
-	QueryMinLength      int
-	QueryMaxLength      int
-	ResultLimit         int
+	TelegramBotToken string
+	YTDLPAutoInstall bool
+	SkipOldUpdates   bool
+	PollTimeout      time.Duration
+	SearchTimeout    time.Duration
+	RetryCount       int
+	UserCooldown     time.Duration
+	CacheTTL         time.Duration
+	QueryMinLength   int
+	QueryMaxLength   int
+	ResultLimit      int
 }
 
 func Load(envPath string) (Config, error) {
@@ -33,18 +32,17 @@ func Load(envPath string) (Config, error) {
 	}
 
 	cfg := Config{
-		TelegramBotToken:    os.Getenv("TELEGRAM_BOT_TOKEN"),
-		SpotifyClientID:     os.Getenv("SPOTIFY_CLIENT_ID"),
-		SpotifyClientSecret: os.Getenv("SPOTIFY_CLIENT_SECRET"),
-		SkipOldUpdates:      boolEnv("BOT_SKIP_OLD_UPDATES", true),
-		PollTimeout:         secondsEnv("BOT_POLL_TIMEOUT_SECONDS", 30),
-		SearchTimeout:       secondsEnv("BOT_SEARCH_TIMEOUT_SECONDS", 15),
-		RetryCount:          intEnv("BOT_RETRY_COUNT", 1),
-		UserCooldown:        secondsEnv("BOT_USER_COOLDOWN_SECONDS", 3),
-		CacheTTL:            secondsEnv("BOT_CACHE_TTL_SECONDS", 600),
-		QueryMinLength:      intEnv("BOT_QUERY_MIN_LENGTH", 3),
-		QueryMaxLength:      intEnv("BOT_QUERY_MAX_LENGTH", 100),
-		ResultLimit:         intEnv("BOT_RESULT_LIMIT", 10),
+		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
+		YTDLPAutoInstall: boolEnv("BOT_YTDLP_AUTO_INSTALL", true),
+		SkipOldUpdates:   boolEnv("BOT_SKIP_OLD_UPDATES", true),
+		PollTimeout:      secondsEnv("BOT_POLL_TIMEOUT_SECONDS", 30),
+		SearchTimeout:    secondsEnv("BOT_SEARCH_TIMEOUT_SECONDS", 15),
+		RetryCount:       intEnv("BOT_RETRY_COUNT", 1),
+		UserCooldown:     secondsEnv("BOT_USER_COOLDOWN_SECONDS", 3),
+		CacheTTL:         secondsEnv("BOT_CACHE_TTL_SECONDS", 600),
+		QueryMinLength:   intEnv("BOT_QUERY_MIN_LENGTH", 3),
+		QueryMaxLength:   intEnv("BOT_QUERY_MAX_LENGTH", 100),
+		ResultLimit:      intEnv("BOT_RESULT_LIMIT", 10),
 	}
 
 	return cfg, nil
@@ -54,12 +52,6 @@ func (c Config) Validate() error {
 	var missing []string
 	if strings.TrimSpace(c.TelegramBotToken) == "" {
 		missing = append(missing, "TELEGRAM_BOT_TOKEN")
-	}
-	if strings.TrimSpace(c.SpotifyClientID) == "" {
-		missing = append(missing, "SPOTIFY_CLIENT_ID")
-	}
-	if strings.TrimSpace(c.SpotifyClientSecret) == "" {
-		missing = append(missing, "SPOTIFY_CLIENT_SECRET")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
