@@ -8,7 +8,8 @@ A Telegram bot for searching music links.
 - User sends a music search query.
 - Bot replies transparently while it works.
 - Bot returns up to 10 YouTube links as inline URL buttons.
-- Configured admins can send an authorized YouTube URL and receive an MP3 audio file.
+- Configured admins receive inline conversion buttons instead of link buttons.
+- When an admin taps a result, the bot sends an MP3 for the authorized video.
 - Cache and per-user rate limiting are in memory for now.
 
 ## Configuration
