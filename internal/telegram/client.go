@@ -46,6 +46,11 @@ func (c *Client) EditMessageText(ctx context.Context, request EditMessageTextReq
 	return c.post(ctx, "editMessageText", request, &result)
 }
 
+func (c *Client) AnswerCallbackQuery(ctx context.Context, request AnswerCallbackQueryRequest) error {
+	var result bool
+	return c.post(ctx, "answerCallbackQuery", request, &result)
+}
+
 func (c *Client) SendAudio(ctx context.Context, request SendAudioRequest) (Message, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -167,6 +172,12 @@ type EditMessageTextRequest struct {
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
+type AnswerCallbackQueryRequest struct {
+	CallbackQueryID string `json:"callback_query_id"`
+	Text            string `json:"text,omitempty"`
+	ShowAlert       bool   `json:"show_alert,omitempty"`
+}
+
 type SendAudioRequest struct {
 	ChatID    int64
 	AudioPath string
@@ -179,13 +190,15 @@ type InlineKeyboardMarkup struct {
 }
 
 type InlineKeyboardButton struct {
-	Text string `json:"text"`
-	URL  string `json:"url,omitempty"`
+	Text         string `json:"text"`
+	URL          string `json:"url,omitempty"`
+	CallbackData string `json:"callback_data,omitempty"`
 }
 
 type Update struct {
-	UpdateID int      `json:"update_id"`
-	Message  *Message `json:"message,omitempty"`
+	UpdateID      int            `json:"update_id"`
+	Message       *Message       `json:"message,omitempty"`
+	CallbackQuery *CallbackQuery `json:"callback_query,omitempty"`
 }
 
 type Message struct {
@@ -201,4 +214,11 @@ type User struct {
 
 type Chat struct {
 	ID int64 `json:"id"`
+}
+
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    User     `json:"from"`
+	Message *Message `json:"message,omitempty"`
+	Data    string   `json:"data,omitempty"`
 }

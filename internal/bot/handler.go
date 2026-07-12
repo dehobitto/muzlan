@@ -29,6 +29,7 @@ type Handler struct {
 	client     *telegram.Client
 	searcher   *search.Service
 	downloader *youtube.Provider
+	buttons    *downloadButtons
 	limiter    *ratelimit.PerUser
 	logger     *log.Logger
 }
@@ -39,12 +40,18 @@ func NewHandler(cfg HandlerConfig, client *telegram.Client, searcher *search.Ser
 		client:     client,
 		searcher:   searcher,
 		downloader: downloader,
+		buttons:    newDownloadButtons(30*time.Minute, time.Now),
 		limiter:    limiter,
 		logger:     logger,
 	}
 }
 
 func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
+	if update.CallbackQuery != nil {
+		h.handleCallbackQuery(ctx, *update.CallbackQuery)
+		return
+	}
+
 	if update.Message == nil || update.Message.Text == "" {
 		return
 	}
@@ -65,7 +72,7 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	}
 
 	if youtube.IsYouTubeURL(query) {
-		h.handleDownload(ctx, chatID, userID, query)
+		h.handleDownload(ctx, chatID, userID, query, true)
 		return
 	}
 
@@ -114,10 +121,50 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	}
 
 	text := fmt.Sprintf("Found results for %q:", query)
-	h.editOrSend(ctx, status.Chat.ID, status.MessageID, text, keyboardForResults(results))
+	h.editOrSend(ctx, status.Chat.ID, status.MessageID, text, h.keyboardForResults(userID, results))
 }
 
-func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64, videoURL string) {
+func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.CallbackQuery) {
+	if callback.Data == "" {
+		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
+			CallbackQueryID: callback.ID,
+			Text:            "Nothing to do for this button.",
+		})
+		return
+	}
+
+	if !h.isAdmin(callback.From.ID) {
+		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
+			CallbackQueryID: callback.ID,
+			Text:            "MP3 conversion is available only to configured admins.",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	videoURL, ok := h.buttons.get(callback.Data)
+	if !ok {
+		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
+			CallbackQueryID: callback.ID,
+			Text:            "This download button expired. Search again.",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
+		CallbackQueryID: callback.ID,
+		Text:            "Starting MP3 conversion...",
+	})
+
+	if callback.Message == nil {
+		return
+	}
+
+	h.handleDownload(ctx, callback.Message.Chat.ID, callback.From.ID, videoURL, false)
+}
+
+func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64, videoURL string, enforceCooldown bool) {
 	if !h.isAdmin(userID) {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
@@ -126,7 +173,7 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 		return
 	}
 
-	if !h.limiter.Allow(userID) {
+	if enforceCooldown && !h.limiter.Allow(userID) {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
 			Text:   "Please wait a moment before starting another conversion.",
@@ -216,7 +263,7 @@ func (h *Handler) isAdmin(userID int64) bool {
 
 func (h *Handler) helpText(userID int64) string {
 	if h.isAdmin(userID) {
-		return "Send a song name to search YouTube links. Send your authorized YouTube video URL to receive an MP3."
+		return "Send a song name to search. Tap a result to receive an MP3 for your authorized video."
 	}
 	return "Send a song name and I will search YouTube links."
 }
@@ -242,13 +289,18 @@ func (h *Handler) editOrSend(ctx context.Context, chatID int64, messageID int, t
 	}
 }
 
-func keyboardForResults(results []search.Result) *telegram.InlineKeyboardMarkup {
+func (h *Handler) keyboardForResults(userID int64, results []search.Result) *telegram.InlineKeyboardMarkup {
 	rows := make([][]telegram.InlineKeyboardButton, 0, len(results))
 	for i, result := range results {
-		rows = append(rows, []telegram.InlineKeyboardButton{{
+		button := telegram.InlineKeyboardButton{
 			Text: fmt.Sprintf("%02d. %s", i+1, trimButtonText(result.Label(), 56)),
-			URL:  result.URL,
-		}})
+		}
+		if h.isAdmin(userID) {
+			button.CallbackData = h.buttons.put(result.URL)
+		} else {
+			button.URL = result.URL
+		}
+		rows = append(rows, []telegram.InlineKeyboardButton{button})
 	}
 
 	return &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
