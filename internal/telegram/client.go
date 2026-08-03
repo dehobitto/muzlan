@@ -52,58 +52,104 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, request AnswerCallback
 }
 
 func (c *Client) SendAudio(ctx context.Context, request SendAudioRequest) (Message, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	if err := writer.WriteField("chat_id", strconv.FormatInt(request.ChatID, 10)); err != nil {
-		return Message{}, err
-	}
-	if request.Caption != "" {
-		if err := writer.WriteField("caption", request.Caption); err != nil {
-			return Message{}, err
-		}
-	}
-	if request.Title != "" {
-		if err := writer.WriteField("title", request.Title); err != nil {
-			return Message{}, err
-		}
-	}
-
 	file, err := os.Open(request.AudioPath)
 	if err != nil {
 		return Message{}, err
 	}
 	defer file.Close()
 
-	part, err := writer.CreateFormFile("audio", filepath.Base(request.AudioPath))
-	if err != nil {
-		return Message{}, err
-	}
-	if _, err := io.Copy(part, file); err != nil {
-		return Message{}, err
-	}
-	if err := writer.Close(); err != nil {
-		return Message{}, err
-	}
+	return c.sendMultipartFile(ctx, "sendAudio", "audio", multipartFileRequest{
+		ChatID:   request.ChatID,
+		Reader:   file,
+		Filename: filepath.Base(request.AudioPath),
+		Caption:  request.Caption,
+		Title:    request.Title,
+	})
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/sendAudio", &body)
+func (c *Client) SendAudioStream(ctx context.Context, request SendAudioStreamRequest) (Message, error) {
+	return c.sendMultipartFile(ctx, "sendAudio", "audio", multipartFileRequest{
+		ChatID:   request.ChatID,
+		Reader:   request.Audio,
+		Filename: request.Filename,
+		Caption:  request.Caption,
+		Title:    request.Title,
+	})
+}
+
+func (c *Client) SendDocument(ctx context.Context, request SendDocumentRequest) (Message, error) {
+	file, err := os.Open(request.DocumentPath)
 	if err != nil {
 		return Message{}, err
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	defer file.Close()
+
+	return c.sendMultipartFile(ctx, "sendDocument", "document", multipartFileRequest{
+		ChatID:   request.ChatID,
+		Reader:   file,
+		Filename: filepath.Base(request.DocumentPath),
+		Caption:  request.Caption,
+	})
+}
+
+func (c *Client) SendDocumentStream(ctx context.Context, request SendDocumentStreamRequest) (Message, error) {
+	return c.sendMultipartFile(ctx, "sendDocument", "document", multipartFileRequest{
+		ChatID:   request.ChatID,
+		Reader:   request.Document,
+		Filename: request.Filename,
+		Caption:  request.Caption,
+	})
+}
+
+func (c *Client) sendMultipartFile(ctx context.Context, method string, fileField string, request multipartFileRequest) (Message, error) {
+	reader, writer := io.Pipe()
+	multipartWriter := multipart.NewWriter(writer)
+	writeDone := make(chan error, 1)
+
+	go func() {
+		err := writeMultipartFile(multipartWriter, fileField, request)
+		if closeErr := multipartWriter.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			_ = writer.CloseWithError(err)
+			writeDone <- err
+			return
+		}
+
+		writeDone <- writer.Close()
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/"+method, reader)
+	if err != nil {
+		_ = reader.CloseWithError(err)
+		<-writeDone
+		return Message{}, err
+	}
+	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		_ = reader.CloseWithError(err)
+		<-writeDone
 		return Message{}, err
 	}
+	_ = reader.Close()
+	writeErr := <-writeDone
 	defer resp.Body.Close()
 
 	var payload response[json.RawMessage]
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		if writeErr != nil {
+			return Message{}, writeErr
+		}
 		return Message{}, err
 	}
 	if !payload.OK {
-		return Message{}, fmt.Errorf("telegram sendAudio failed: status %d: %s", payload.ErrorCode, payload.Description)
+		return Message{}, fmt.Errorf("telegram %s failed: status %d: %s", method, payload.ErrorCode, payload.Description)
+	}
+	if writeErr != nil {
+		return Message{}, writeErr
 	}
 
 	var result Message
@@ -112,6 +158,41 @@ func (c *Client) SendAudio(ctx context.Context, request SendAudioRequest) (Messa
 	}
 
 	return result, nil
+}
+
+func writeMultipartFile(writer *multipart.Writer, fileField string, request multipartFileRequest) error {
+	if request.Filename == "" {
+		request.Filename = "audio"
+	}
+
+	if err := writer.WriteField("chat_id", strconv.FormatInt(request.ChatID, 10)); err != nil {
+		return err
+	}
+	if request.Caption != "" {
+		if err := writer.WriteField("caption", request.Caption); err != nil {
+			return err
+		}
+	}
+	if request.Title != "" {
+		if err := writer.WriteField("title", request.Title); err != nil {
+			return err
+		}
+	}
+
+	part, err := writer.CreateFormFile(fileField, request.Filename)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(part, request.Reader)
+	return err
+}
+
+type multipartFileRequest struct {
+	ChatID   int64
+	Reader   io.Reader
+	Filename string
+	Caption  string
+	Title    string
 }
 
 func (c *Client) post(ctx context.Context, method string, request any, result any) error {
@@ -183,6 +264,27 @@ type SendAudioRequest struct {
 	AudioPath string
 	Caption   string
 	Title     string
+}
+
+type SendAudioStreamRequest struct {
+	ChatID   int64
+	Audio    io.Reader
+	Filename string
+	Caption  string
+	Title    string
+}
+
+type SendDocumentRequest struct {
+	ChatID       int64
+	DocumentPath string
+	Caption      string
+}
+
+type SendDocumentStreamRequest struct {
+	ChatID   int64
+	Document io.Reader
+	Filename string
+	Caption  string
 }
 
 type InlineKeyboardMarkup struct {

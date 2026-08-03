@@ -1,12 +1,17 @@
 package youtube
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	ytdlp "github.com/lrstanley/go-ytdlp"
 
@@ -15,6 +20,68 @@ import (
 
 type Provider struct {
 	autoInstall bool
+}
+
+type AudioStream struct {
+	Reader   io.ReadCloser
+	Filename string
+	wait     func() error
+	waitOnce sync.Once
+	waitErr  error
+}
+
+func (s *AudioStream) Close() error {
+	if s == nil || s.Reader == nil {
+		return nil
+	}
+	return s.Reader.Close()
+}
+
+func (s *AudioStream) Wait() error {
+	if s == nil || s.wait == nil {
+		return nil
+	}
+
+	s.waitOnce.Do(func() {
+		s.waitErr = s.wait()
+	})
+	return s.waitErr
+}
+
+type DownloadError struct {
+	URL      string
+	Err      error
+	ExitCode int
+	Stdout   string
+	Stderr   string
+	Files    []string
+}
+
+func (e DownloadError) Error() string {
+	return fmt.Sprintf("download audio: %v", e.Err)
+}
+
+func (e DownloadError) Unwrap() error {
+	return e.Err
+}
+
+func (e DownloadError) Diagnostics() string {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("url=%q", e.URL))
+	if e.ExitCode != 0 {
+		parts = append(parts, fmt.Sprintf("exit_code=%d", e.ExitCode))
+	}
+	if strings.TrimSpace(e.Stdout) != "" {
+		parts = append(parts, "stdout="+strings.TrimSpace(e.Stdout))
+	}
+	if strings.TrimSpace(e.Stderr) != "" {
+		parts = append(parts, "stderr="+strings.TrimSpace(e.Stderr))
+	}
+	if len(e.Files) > 0 {
+		parts = append(parts, "files="+strings.Join(e.Files, ", "))
+	}
+	parts = append(parts, fmt.Sprintf("error=%v", e.Err))
+	return strings.Join(parts, " ")
 }
 
 func NewProvider(autoInstall bool) *Provider {
@@ -29,12 +96,6 @@ func (p *Provider) Prepare(ctx context.Context) error {
 	if _, err := ytdlp.Install(ctx, nil); err != nil {
 		return fmt.Errorf("prepare yt-dlp: %w", err)
 	}
-	if _, err := ytdlp.InstallFFmpeg(ctx, nil); err != nil {
-		return fmt.Errorf("prepare ffmpeg: %w", err)
-	}
-	if _, err := ytdlp.InstallFFprobe(ctx, nil); err != nil {
-		return fmt.Errorf("prepare ffprobe: %w", err)
-	}
 
 	return nil
 }
@@ -47,6 +108,7 @@ func (p *Provider) Search(ctx context.Context, query string, limit int) ([]searc
 	result, err := ytdlp.New().
 		FlatPlaylist().
 		DumpJSON().
+		JsRuntimes("node").
 		NoWarnings().
 		Run(ctx, fmt.Sprintf("ytsearch%d:%s", limit, query))
 	if err != nil {
@@ -76,6 +138,38 @@ func (p *Provider) Search(ctx context.Context, query string, limit int) ([]searc
 	return results, nil
 }
 
+func (p *Provider) StreamAudio(ctx context.Context, videoURL string) (*AudioStream, error) {
+	cmd := ytdlp.New().
+		NoPlaylist().
+		Format("bestaudio[ext=m4a]/bestaudio/best").
+		JsRuntimes("node").
+		Output("-").
+		BuildCommand(ctx, videoURL)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, search.TemporaryError{Err: newStreamDownloadError(videoURL, cmd, stderr.String(), err)}
+	}
+
+	return &AudioStream{
+		Reader:   stdout,
+		Filename: "audio.m4a",
+		wait: func() error {
+			if err := cmd.Wait(); err != nil {
+				return search.TemporaryError{Err: newStreamDownloadError(videoURL, cmd, stderr.String(), err)}
+			}
+			return nil
+		},
+	}, nil
+}
+
 func (p *Provider) DownloadMP3(ctx context.Context, videoURL string) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "muzlan-audio-*")
 	if err != nil {
@@ -86,27 +180,84 @@ func (p *Provider) DownloadMP3(ctx context.Context, videoURL string) (string, fu
 		_ = os.RemoveAll(dir)
 	}
 
-	_, err = ytdlp.New().
+	result, err := ytdlp.New().
 		NoPlaylist().
-		ExtractAudio().
-		AudioFormat("mp3").
-		AudioQuality("0").
+		Format("bestaudio[ext=m4a]/bestaudio/best").
+		JsRuntimes("node").
 		RestrictFilenames().
 		NoPart().
 		Output(filepath.Join(dir, "%(title).120B-%(id)s.%(ext)s")).
 		Run(ctx, videoURL)
 	if err != nil {
+		if path, audioErr := firstAudioFile(dir); audioErr == nil {
+			return path, cleanup, nil
+		}
+
+		files := listFiles(dir)
 		cleanup()
-		return "", nil, search.TemporaryError{Err: err}
+		return "", nil, search.TemporaryError{Err: newDownloadError(videoURL, result, files, err)}
 	}
 
-	path, err := firstMP3(dir)
+	path, err := firstAudioFile(dir)
 	if err != nil {
 		cleanup()
 		return "", nil, err
 	}
 
 	return path, cleanup, nil
+}
+
+func newStreamDownloadError(videoURL string, cmd *exec.Cmd, stderr string, err error) DownloadError {
+	exitCode := 0
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		exitCode = exitErr.ExitCode()
+	} else if cmd != nil && cmd.ProcessState != nil {
+		exitCode = cmd.ProcessState.ExitCode()
+	}
+
+	return DownloadError{
+		URL:      videoURL,
+		Err:      err,
+		ExitCode: exitCode,
+		Stderr:   stderr,
+	}
+}
+
+func newDownloadError(videoURL string, result *ytdlp.Result, files []string, err error) DownloadError {
+	if result == nil {
+		return DownloadError{
+			URL:   videoURL,
+			Err:   err,
+			Files: files,
+		}
+	}
+
+	return DownloadError{
+		URL:      videoURL,
+		Err:      err,
+		ExitCode: result.ExitCode,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+		Files:    files,
+	}
+}
+
+func listFiles(dir string) []string {
+	var files []string
+	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+
+		label := filepath.Base(path)
+		if info, infoErr := entry.Info(); infoErr == nil {
+			label = fmt.Sprintf("%s(%d bytes)", label, info.Size())
+		}
+		files = append(files, label)
+		return nil
+	})
+	return files
 }
 
 func IsYouTubeURL(value string) bool {
@@ -119,13 +270,13 @@ func IsYouTubeURL(value string) bool {
 		strings.HasPrefix(normalized, "http://youtu.be/")
 }
 
-func firstMP3(dir string) (string, error) {
+func firstAudioFile(dir string) (string, error) {
 	var found string
 	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || strings.ToLower(filepath.Ext(path)) != ".mp3" {
+		if entry.IsDir() || isTemporaryDownloadFile(path) {
 			return nil
 		}
 		found = path
@@ -135,9 +286,17 @@ func firstMP3(dir string) (string, error) {
 		return "", err
 	}
 	if found == "" {
-		return "", fmt.Errorf("yt-dlp did not produce an mp3 file")
+		return "", fmt.Errorf("yt-dlp did not produce an audio file")
 	}
 	return found, nil
+}
+
+func isTemporaryDownloadFile(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	return strings.HasSuffix(name, ".part") ||
+		strings.HasSuffix(name, ".ytdl") ||
+		strings.HasSuffix(name, ".temp") ||
+		strings.HasSuffix(name, ".tmp")
 }
 
 func flattenInfos(infos []*ytdlp.ExtractedInfo) []*ytdlp.ExtractedInfo {
