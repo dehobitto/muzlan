@@ -15,3 +15,13 @@ func TestTrimButtonTextKeepsShortText(t *testing.T) {
 		t.Fatalf("expected short text unchanged, got %q", got)
 	}
 }
+
+func TestAudioMetadataUsesTitleAsFilename(t *testing.T) {
+	got := audioMetadata(`Artist: "Song"?`, "audio.m4a")
+	if got.title != `Artist: "Song"?` {
+		t.Fatalf("unexpected title: %q", got.title)
+	}
+	if got.filename != "Artist_ _Song__.m4a" {
+		t.Fatalf("unexpected filename: %q", got.filename)
+	}
+}

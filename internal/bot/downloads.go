@@ -19,6 +19,7 @@ type downloadButtons struct {
 
 type downloadEntry struct {
 	url       string
+	title     string
 	expiresAt time.Time
 }
 
@@ -30,7 +31,7 @@ func newDownloadButtons(ttl time.Duration, now func() time.Time) *downloadButton
 	}
 }
 
-func (d *downloadButtons) put(url string) string {
+func (d *downloadButtons) put(url string, title string) string {
 	token := randomToken()
 
 	d.mu.Lock()
@@ -38,14 +39,15 @@ func (d *downloadButtons) put(url string) string {
 
 	d.entries[token] = downloadEntry{
 		url:       url,
+		title:     strings.TrimSpace(title),
 		expiresAt: d.now().Add(d.ttl),
 	}
 	return downloadCallbackPrefix + token
 }
 
-func (d *downloadButtons) get(data string) (string, bool) {
+func (d *downloadButtons) get(data string) (downloadEntry, bool) {
 	if !strings.HasPrefix(data, downloadCallbackPrefix) {
-		return "", false
+		return downloadEntry{}, false
 	}
 
 	token := data[len(downloadCallbackPrefix):]
@@ -55,14 +57,14 @@ func (d *downloadButtons) get(data string) (string, bool) {
 
 	entry, ok := d.entries[token]
 	if !ok {
-		return "", false
+		return downloadEntry{}, false
 	}
 	if !d.now().Before(entry.expiresAt) {
 		delete(d.entries, token)
-		return "", false
+		return downloadEntry{}, false
 	}
 
-	return entry.url, true
+	return entry, true
 }
 
 func randomToken() string {

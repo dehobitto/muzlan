@@ -1,6 +1,8 @@
 package youtube
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	ytdlp "github.com/lrstanley/go-ytdlp"
@@ -41,6 +43,28 @@ func TestIsYouTubeURL(t *testing.T) {
 	for _, tt := range tests {
 		if got := IsYouTubeURL(tt.value); got != tt.want {
 			t.Fatalf("IsYouTubeURL(%q) = %v, want %v", tt.value, got, tt.want)
+		}
+	}
+}
+
+func TestDownloadErrorDiagnostics(t *testing.T) {
+	err := newDownloadError("https://youtu.be/abc123", &ytdlp.Result{
+		ExitCode: 1,
+		Stdout:   "out",
+		Stderr:   "yt-dlp failed",
+	}, []string{"partial.webm(100 bytes)"}, errors.New("failed"))
+
+	diagnostics := err.Diagnostics()
+	for _, want := range []string{
+		`url="https://youtu.be/abc123"`,
+		"exit_code=1",
+		"stdout=out",
+		"stderr=yt-dlp failed",
+		"files=partial.webm(100 bytes)",
+		"error=failed",
+	} {
+		if !strings.Contains(diagnostics, want) {
+			t.Fatalf("expected diagnostics to contain %q, got %q", want, diagnostics)
 		}
 	}
 }
