@@ -18,7 +18,6 @@ A Telegram bot for searching music links.
 Fill in `.env`:
 
 - `TELEGRAM_BOT_TOKEN`: token from Telegram BotFather.
-- `BOT_ADMIN_USER_IDS`: comma-separated Telegram user IDs for admin-only flows when they are enabled.
 - `BOT_YTDLP_AUTO_INSTALL`: set to `true` to let `go-ytdlp` install `yt-dlp` automatically when the bot starts. Docker sets this to `false` because `yt-dlp` is installed in the image.
 
 ## Run

@@ -23,7 +23,6 @@ type HandlerConfig struct {
 	SearchTimeout   time.Duration
 	DownloadTimeout time.Duration
 	RetryCount      int
-	AdminUserIDs    map[int64]bool
 }
 
 type Handler struct {
@@ -137,15 +136,6 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.Cal
 		return
 	}
 
-	//if !h.isAdmin(callback.From.ID) {
-	//	_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
-	//		CallbackQueryID: callback.ID,
-	//		Text:            "MP3 conversion is available only to configured admins.",
-	//		ShowAlert:       true,
-	//	})
-	//	return
-	//}
-
 	entry, ok := h.buttons.get(callback.Data)
 	if !ok {
 		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
@@ -169,14 +159,6 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.Cal
 }
 
 func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64, videoURL string, title string, enforceCooldown bool) {
-	//if !h.isAdmin(userID) {
-	//	_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
-	//		ChatID: chatID,
-	//		Text:   "MP3 conversion is available only to configured admins.",
-	//	})
-	//	return
-	//}
-
 	if enforceCooldown && !h.limiter.Allow(userID) {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
@@ -413,10 +395,6 @@ func (h *Handler) logDownloadError(chatID int64, userID int64, videoURL string, 
 	}
 
 	h.logger.Printf("audio download failed: chat_id=%d user_id=%d url=%q error=%v", chatID, userID, videoURL, err)
-}
-
-func (h *Handler) isAdmin(userID int64) bool {
-	return h.cfg.AdminUserIDs[userID]
 }
 
 func (h *Handler) editOrSend(ctx context.Context, chatID int64, messageID int, text string, markup *telegram.InlineKeyboardMarkup) {

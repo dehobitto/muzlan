@@ -35,7 +35,6 @@ func New(cfg config.Config, httpClient *http.Client, logger *log.Logger) *App {
 		SearchTimeout:   cfg.SearchTimeout,
 		DownloadTimeout: cfg.DownloadTimeout,
 		RetryCount:      cfg.RetryCount,
-		AdminUserIDs:    cfg.AdminUserIDs,
 	}, telegramClient, searcher, youtubeProvider, limiter, logger)
 
 	return &App{
