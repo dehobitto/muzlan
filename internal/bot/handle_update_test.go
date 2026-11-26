@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +62,7 @@ func newTestHandler(results []search.Result, rejectRich bool, rejectImages bool)
 	})}
 
 	handler := NewHandler(
-		HandlerConfig{QueryMinLength: 3, QueryMaxLength: 10, ResultLimit: 10, SearchTimeout: time.Second},
+		HandlerConfig{QueryMinLength: 3, QueryMaxLength: 10, ResultLimit: 30, SearchTimeout: time.Second},
 		telegram.NewClient("test", httpClient),
 		search.NewService(stubSearch(results), time.Minute, time.Now),
 		nil,
@@ -97,6 +98,11 @@ func TestHandleUpdateReplies(t *testing.T) {
 			updates: []telegram.Update{{CallbackQuery: &telegram.CallbackQuery{ID: "1", Data: "download:missing"}}},
 			want:    "This download button expired. Search again.",
 		},
+		{
+			name:    "expired page",
+			updates: []telegram.Update{{CallbackQuery: &telegram.CallbackQuery{ID: "1", Data: "page:missing:2"}}},
+			want:    "These results expired. Search again.",
+		},
 	}
 
 	for _, test := range tests {
@@ -110,4 +116,29 @@ func TestHandleUpdateReplies(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleUpdatePages(t *testing.T) {
+	results := make([]search.Result, 7) // 2 pages
+	for i := range results {
+		results[i] = search.Result{Title: "t", URL: "u"}
+	}
+	handler, texts := newTestHandler(results, false, false)
+
+	handler.HandleUpdate(context.Background(), message("song"))
+	first := (*texts)[len(*texts)-1]
+	assertContains(t, first, "<sub>1 / 2</sub>", "<td>05</td>")
+	if strings.Contains(first, "<td>06</td>") {
+		t.Fatalf("first page must show 5 results:\n%s", first)
+	}
+
+	next := regexp.MustCompile(`data="(page:[^"]+)">Next`).FindStringSubmatch(first)
+	if next == nil {
+		t.Fatalf("no Next button in:\n%s", first)
+	}
+	handler.HandleUpdate(context.Background(), telegram.Update{CallbackQuery: &telegram.CallbackQuery{
+		ID: "2", Data: next[1], From: telegram.User{ID: 1},
+		Message: &telegram.Message{MessageID: 1, Chat: telegram.Chat{ID: 7}},
+	}})
+	assertContains(t, (*texts)[len(*texts)-1], "<sub>2 / 2</sub>", "<td>06</td>", "<td>07</td>", "‹ Back")
 }

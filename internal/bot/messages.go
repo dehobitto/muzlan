@@ -16,6 +16,9 @@ const (
 	// Rich search results (rich.go).
 	msgRichResultsTitle = "%s..."
 	msgRichDownload     = "Download"
+	msgPagePrev         = "‹ Back"
+	msgPageNext         = "Next ›"
+	msgPageExpired      = "These results expired. Search again."
 
 	msgButtonEmpty   = "Nothing to do for this button."
 	msgButtonExpired = "This download button expired. Search again."

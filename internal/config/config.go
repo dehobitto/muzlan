@@ -44,7 +44,7 @@ func Load(envPath string) (Config, error) {
 		CacheTTL:         secondsEnv("BOT_CACHE_TTL_SECONDS", 600),
 		QueryMinLength:   intEnv("BOT_QUERY_MIN_LENGTH", 3),
 		QueryMaxLength:   intEnv("BOT_QUERY_MAX_LENGTH", 100),
-		ResultLimit:      intEnv("BOT_RESULT_LIMIT", 10),
+		ResultLimit:      intEnv("BOT_RESULT_LIMIT", 30),
 	}
 
 	return cfg, nil
@@ -64,8 +64,8 @@ func (c Config) Validate() error {
 	if c.QueryMaxLength < c.QueryMinLength {
 		return errors.New("BOT_QUERY_MAX_LENGTH must be greater than or equal to BOT_QUERY_MIN_LENGTH")
 	}
-	if c.ResultLimit < 1 || c.ResultLimit > 10 {
-		return errors.New("BOT_RESULT_LIMIT must be between 1 and 10")
+	if c.ResultLimit < 1 || c.ResultLimit > 50 {
+		return errors.New("BOT_RESULT_LIMIT must be between 1 and 50")
 	}
 	if c.SearchTimeout <= 0 {
 		return errors.New("BOT_SEARCH_TIMEOUT_SECONDS must be greater than 0")
