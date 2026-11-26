@@ -7,7 +7,7 @@ A Telegram bot for searching music links.
 - Telegram bot listens with polling.
 - User sends a music search query.
 - Bot replies transparently while it works.
-- Bot returns up to 10 YouTube results as inline buttons.
+- Bot returns up to 30 YouTube results, 5 per page, with buttons to flip pages.
 - When a result is tapped, the bot streams audio from `yt-dlp` to Telegram.
 - The happy path sends audio with Telegram player support.
 - If Telegram rejects the streamed audio upload, the bot retries once as a document stream.

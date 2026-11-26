@@ -31,6 +31,7 @@ type Handler struct {
 	searcher   *search.Service
 	downloader *youtube.Provider
 	buttons    *downloadButtons
+	pages      *searchPages
 	limiter    *ratelimit.PerUser
 	logger     *log.Logger
 }
@@ -42,6 +43,7 @@ func NewHandler(cfg HandlerConfig, client *telegram.Client, searcher *search.Ser
 		searcher:   searcher,
 		downloader: downloader,
 		buttons:    newDownloadButtons(30*time.Minute, time.Now),
+		pages:      newSearchPages(30*time.Minute, time.Now),
 		limiter:    limiter,
 		logger:     logger,
 	}
@@ -121,14 +123,20 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 		return
 	}
 
+	h.showResults(ctx, status.Chat.ID, status.MessageID, h.pages.put(query), newResultsPage(query, results, 1))
+}
+
+// showResults edits messageID into one page of search results.
+func (h *Handler) showResults(ctx context.Context, chatID int64, messageID int, token string, page resultsPage) {
+	download := func(result search.Result) string { return h.buttons.put(result.URL, result.Label()) }
+	nav := func(number int) string { return pageCallback(token, number) }
+
 	// Telegram sometimes fails to fetch a YouTube thumbnail, so retry without them.
 	for _, thumbnails := range []bool{true, false} {
-		rich := richResults(query, results, thumbnails, func(result search.Result) string {
-			return h.buttons.put(result.URL, result.Label())
-		})
-		err = h.client.EditMessageText(ctx, telegram.EditMessageTextRequest{
-			ChatID:      status.Chat.ID,
-			MessageID:   status.MessageID,
+		rich := richResults(page, thumbnails, download, nav)
+		err := h.client.EditMessageText(ctx, telegram.EditMessageTextRequest{
+			ChatID:      chatID,
+			MessageID:   messageID,
 			RichMessage: &rich,
 		})
 		if err == nil {
@@ -137,8 +145,37 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 		h.logger.Printf("rich search results failed: thumbnails=%t error=%v", thumbnails, err)
 	}
 
-	text := fmt.Sprintf(msgResults, query)
-	h.editOrSend(ctx, status.Chat.ID, status.MessageID, text, h.keyboardForResults(userID, results))
+	text := fmt.Sprintf(msgResults, page.query)
+	h.editOrSend(ctx, chatID, messageID, text, keyboardForResults(page, download, nav))
+}
+
+func (h *Handler) handlePageCallback(ctx context.Context, callback telegram.CallbackQuery) {
+	token, number, ok := parsePageCallback(callback.Data)
+	query, found := h.pages.get(token)
+	if !ok || !found || callback.Message == nil {
+		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
+			CallbackQueryID: callback.ID,
+			Text:            msgPageExpired,
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	// Usually a cache hit: the search service keeps results for a while.
+	searchCtx, cancel := context.WithTimeout(ctx, h.cfg.SearchTimeout)
+	results, err := h.searcher.Search(searchCtx, query, h.cfg.ResultLimit)
+	cancel()
+	if err != nil || len(results) == 0 {
+		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
+			CallbackQueryID: callback.ID,
+			Text:            msgSearchFailed,
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{CallbackQueryID: callback.ID})
+	h.showResults(ctx, callback.Message.Chat.ID, callback.Message.MessageID, token, newResultsPage(query, results, number))
 }
 
 func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.CallbackQuery) {
@@ -147,6 +184,11 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.Cal
 			CallbackQueryID: callback.ID,
 			Text:            msgButtonEmpty,
 		})
+		return
+	}
+
+	if strings.HasPrefix(callback.Data, pageCallbackPrefix) {
+		h.handlePageCallback(ctx, callback)
 		return
 	}
 
@@ -432,15 +474,24 @@ func (h *Handler) editOrSend(ctx context.Context, chatID int64, messageID int, t
 	}
 }
 
-func (h *Handler) keyboardForResults(userID int64, results []search.Result) *telegram.InlineKeyboardMarkup {
-	rows := make([][]telegram.InlineKeyboardButton, 0, len(results))
-	for i, result := range results {
-		button := telegram.InlineKeyboardButton{
-			Text: fmt.Sprintf("%02d. %s", i+1, trimButtonText(result.Label(), 56)),
-		}
+func keyboardForResults(page resultsPage, download func(search.Result) string, nav func(page int) string) *telegram.InlineKeyboardMarkup {
+	rows := make([][]telegram.InlineKeyboardButton, 0, len(page.results)+1)
+	for i, result := range page.results {
+		rows = append(rows, []telegram.InlineKeyboardButton{{
+			Text:         fmt.Sprintf("%02d. %s", page.first+i, trimButtonText(result.Label(), 56)),
+			CallbackData: download(result),
+		}})
+	}
 
-		button.CallbackData = h.buttons.put(result.URL, result.Label())
-		rows = append(rows, []telegram.InlineKeyboardButton{button})
+	var navRow []telegram.InlineKeyboardButton
+	if page.page > 1 {
+		navRow = append(navRow, telegram.InlineKeyboardButton{Text: msgPagePrev, CallbackData: nav(page.page - 1)})
+	}
+	if page.page < page.pages {
+		navRow = append(navRow, telegram.InlineKeyboardButton{Text: msgPageNext, CallbackData: nav(page.page + 1)})
+	}
+	if len(navRow) > 0 {
+		rows = append(rows, navRow)
 	}
 
 	return &telegram.InlineKeyboardMarkup{InlineKeyboard: rows}
