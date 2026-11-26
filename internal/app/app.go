@@ -10,6 +10,7 @@ import (
 	"github.com/dehobitto/muzlan/internal/config"
 	"github.com/dehobitto/muzlan/internal/ratelimit"
 	"github.com/dehobitto/muzlan/internal/search"
+	"github.com/dehobitto/muzlan/internal/stats"
 	"github.com/dehobitto/muzlan/internal/telegram"
 	"github.com/dehobitto/muzlan/internal/youtube"
 )
@@ -27,6 +28,11 @@ func New(cfg config.Config, httpClient *http.Client, logger *log.Logger) *App {
 	youtubeProvider := youtube.NewProvider(cfg.YTDLPAutoInstall)
 	searcher := search.NewService(youtubeProvider, cfg.CacheTTL, time.Now)
 	limiter := ratelimit.NewPerUser(cfg.UserCooldown, time.Now)
+	events, err := stats.Open(cfg.EventsFile)
+	if err != nil {
+		// Metrics are optional: keep the bot running without them.
+		logger.Printf("open events file, metrics disabled: %v", err)
+	}
 
 	handler := bot.NewHandler(bot.HandlerConfig{
 		QueryMinLength:  cfg.QueryMinLength,
@@ -35,7 +41,8 @@ func New(cfg config.Config, httpClient *http.Client, logger *log.Logger) *App {
 		SearchTimeout:   cfg.SearchTimeout,
 		DownloadTimeout: cfg.DownloadTimeout,
 		RetryCount:      cfg.RetryCount,
-	}, telegramClient, searcher, youtubeProvider, limiter, logger)
+		AdminUserIDs:    cfg.AdminUserIDs,
+	}, telegramClient, searcher, youtubeProvider, limiter, events, logger)
 
 	return &App{
 		cfg:     cfg,

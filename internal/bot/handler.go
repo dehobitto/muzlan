@@ -7,11 +7,13 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dehobitto/muzlan/internal/ratelimit"
 	"github.com/dehobitto/muzlan/internal/search"
+	"github.com/dehobitto/muzlan/internal/stats"
 	"github.com/dehobitto/muzlan/internal/telegram"
 	"github.com/dehobitto/muzlan/internal/youtube"
 )
@@ -23,6 +25,8 @@ type HandlerConfig struct {
 	SearchTimeout   time.Duration
 	DownloadTimeout time.Duration
 	RetryCount      int
+	// AdminUserIDs may use /stats and get alerts.
+	AdminUserIDs map[int64]bool
 }
 
 type Handler struct {
@@ -33,10 +37,15 @@ type Handler struct {
 	buttons    *downloadButtons
 	pages      *searchPages
 	limiter    *ratelimit.PerUser
+	events     *stats.Recorder
 	logger     *log.Logger
+
+	alertMu   sync.Mutex
+	lastAlert time.Time
 }
 
-func NewHandler(cfg HandlerConfig, client *telegram.Client, searcher *search.Service, downloader *youtube.Provider, limiter *ratelimit.PerUser, logger *log.Logger) *Handler {
+// NewHandler builds a Handler; a nil events Recorder disables metrics.
+func NewHandler(cfg HandlerConfig, client *telegram.Client, searcher *search.Service, downloader *youtube.Provider, limiter *ratelimit.PerUser, events *stats.Recorder, logger *log.Logger) *Handler {
 	return &Handler{
 		cfg:        cfg,
 		client:     client,
@@ -45,6 +54,7 @@ func NewHandler(cfg HandlerConfig, client *telegram.Client, searcher *search.Ser
 		buttons:    newDownloadButtons(30*time.Minute, time.Now),
 		pages:      newSearchPages(30*time.Minute, time.Now),
 		limiter:    limiter,
+		events:     events,
 		logger:     logger,
 	}
 }
@@ -66,7 +76,13 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 		return
 	}
 
-	if strings.HasPrefix(query, "/start") || strings.HasPrefix(query, "/help") {
+	if strings.HasPrefix(query, "/stats") && h.cfg.AdminUserIDs[userID] {
+		h.handleStats(ctx, chatID)
+		return
+	}
+
+	// Any other command, /stats from a non-admin included, gets the help text.
+	if strings.HasPrefix(query, "/") {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
 			Text:   msgHelp,
@@ -112,8 +128,13 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 		return
 	}
 
+	searchStart := time.Now()
 	results, err := h.searchWithRetry(ctx, status.Chat.ID, status.MessageID, query)
+	h.record(stats.Event{Type: stats.TypeSearch, User: h.events.User(userID), OK: err == nil, Results: len(results), MS: time.Since(searchStart).Milliseconds()})
 	if err != nil {
+		if isSignInError(err) {
+			h.alertSignIn(ctx)
+		}
 		h.editOrSend(ctx, status.Chat.ID, status.MessageID, errorMessage(err), nil)
 		return
 	}
@@ -140,11 +161,15 @@ func (h *Handler) showResults(ctx context.Context, chatID int64, messageID int, 
 			RichMessage: &rich,
 		})
 		if err == nil {
+			if !thumbnails {
+				h.record(stats.Event{Type: stats.TypeRichFallback, Level: "no_thumbnails"})
+			}
 			return
 		}
 		h.logger.Printf("rich search results failed: thumbnails=%t error=%v", thumbnails, err)
 	}
 
+	h.record(stats.Event{Type: stats.TypeRichFallback, Level: "plain"})
 	text := fmt.Sprintf(msgResults, page.query)
 	h.editOrSend(ctx, chatID, messageID, text, keyboardForResults(page, download, nav))
 }
@@ -175,6 +200,7 @@ func (h *Handler) handlePageCallback(ctx context.Context, callback telegram.Call
 	}
 
 	_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{CallbackQueryID: callback.ID})
+	h.record(stats.Event{Type: stats.TypePage, User: h.events.User(callback.From.ID)})
 	h.showResults(ctx, callback.Message.Chat.ID, callback.Message.MessageID, token, newResultsPage(query, results, number))
 }
 
@@ -233,6 +259,10 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 	}
 
 	h.logger.Printf("audio download started: chat_id=%d user_id=%d url=%q", chatID, userID, videoURL)
+	start := time.Now()
+	failure := "" // a stats.Reason* when the download fails
+	defer func() { h.recordDownload(ctx, userID, start, failure) }()
+
 	downloadCtx, cancel := context.WithTimeout(ctx, h.cfg.DownloadTimeout)
 	uploadErr, downloadErr := h.streamAudio(downloadCtx, chatID, userID, videoURL, title)
 	cancel()
@@ -250,12 +280,14 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 			if documentDownloadErr != nil {
 				h.logDownloadError(chatID, userID, videoURL, documentDownloadErr)
 			}
+			failure = stats.ReasonTelegram
 			h.editOrSend(ctx, status.Chat.ID, status.MessageID, msgUploadFailed, nil)
 			h.logger.Printf("telegram document stream upload failed: chat_id=%d user_id=%d error=%v", chatID, userID, documentUploadErr)
 			return
 		}
 		if documentDownloadErr != nil {
 			h.logDownloadError(chatID, userID, videoURL, documentDownloadErr)
+			failure = failureReason(documentDownloadErr)
 			h.editOrSend(ctx, status.Chat.ID, status.MessageID, downloadErrorMessage(documentDownloadErr), nil)
 			return
 		}
@@ -265,6 +297,7 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 	}
 	if downloadErr != nil {
 		h.logDownloadError(chatID, userID, videoURL, downloadErr)
+		failure = failureReason(downloadErr)
 		h.editOrSend(ctx, status.Chat.ID, status.MessageID, downloadErrorMessage(downloadErr), nil)
 		return
 	}

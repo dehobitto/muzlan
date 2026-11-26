@@ -21,6 +21,8 @@ RUN apt-get update \
     && echo "${sum}  /usr/local/bin/yt-dlp" | sha256sum -c - \
     && chmod 755 /usr/local/bin/yt-dlp
 COPY --from=build /muzlan-bot /usr/local/bin/muzlan-bot
+# Metrics volume; created here so the node user owns it.
+RUN mkdir /data && chown node:node /data
 ENV BOT_YTDLP_AUTO_INSTALL=false
 USER node
 WORKDIR /home/node

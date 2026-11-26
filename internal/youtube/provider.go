@@ -113,7 +113,8 @@ func (p *Provider) Search(ctx context.Context, query string, limit int) ([]searc
 		NoWarnings().
 		Run(ctx, fmt.Sprintf("ytsearch%d:%s", limit, query))
 	if err != nil {
-		return nil, search.TemporaryError{Err: err}
+		// Keep yt-dlp's stderr: the bot looks for YouTube's sign-in block in it.
+		return nil, search.TemporaryError{Err: newDownloadError(query, result, nil, err)}
 	}
 
 	infos, err := result.GetExtractedInfo()

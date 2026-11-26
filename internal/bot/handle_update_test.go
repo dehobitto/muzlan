@@ -67,6 +67,7 @@ func newTestHandler(results []search.Result, rejectRich bool, rejectImages bool)
 		search.NewService(stubSearch(results), time.Minute, time.Now),
 		nil,
 		ratelimit.NewPerUser(time.Hour, time.Now),
+		nil,
 		log.New(io.Discard, "", 0),
 	)
 	return handler, texts
