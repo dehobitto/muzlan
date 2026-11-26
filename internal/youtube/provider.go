@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	ytdlp "github.com/lrstanley/go-ytdlp"
 
@@ -315,10 +316,17 @@ func flattenInfos(infos []*ytdlp.ExtractedInfo) []*ytdlp.ExtractedInfo {
 }
 
 func resultFromInfo(info *ytdlp.ExtractedInfo) search.Result {
+	var duration time.Duration
+	if info.Duration != nil {
+		duration = time.Duration(*info.Duration * float64(time.Second))
+	}
 	return search.Result{
 		Title:   deref(info.Title),
 		Creator: firstNonEmpty(deref(info.Artist), deref(info.Creator), deref(info.Uploader), deref(info.Channel)),
 		URL:     youtubeURL(info),
+		// Built from the ID: flat search results often carry no thumbnail list.
+		Thumbnail: "https://i.ytimg.com/vi/" + strings.TrimSpace(info.ID) + "/mqdefault.jpg", // 320x180
+		Duration:  duration,
 	}
 }
 
