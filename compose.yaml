@@ -5,4 +5,10 @@ services:
     environment:
       # Overrides .env: yt-dlp is already installed in the image.
       BOT_YTDLP_AUTO_INSTALL: "false"
+      BOT_EVENTS_FILE: /data/events.jsonl
+    volumes:
+      - data:/data
     restart: unless-stopped
+
+volumes:
+  data:

@@ -12,6 +12,8 @@ import (
 
 type Config struct {
 	TelegramBotToken string
+	AdminUserIDs     map[int64]bool
+	EventsFile       string
 	YTDLPAutoInstall bool
 	SkipOldUpdates   bool
 	PollTimeout      time.Duration
@@ -34,6 +36,8 @@ func Load(envPath string) (Config, error) {
 
 	cfg := Config{
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
+		AdminUserIDs:     int64SetEnv("BOT_ADMIN_USER_IDS"),
+		EventsFile:       strings.TrimSpace(os.Getenv("BOT_EVENTS_FILE")),
 		YTDLPAutoInstall: boolEnv("BOT_YTDLP_AUTO_INSTALL", true),
 		SkipOldUpdates:   boolEnv("BOT_SKIP_OLD_UPDATES", true),
 		PollTimeout:      secondsEnv("BOT_POLL_TIMEOUT_SECONDS", 30),
@@ -143,4 +147,14 @@ func boolEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+func int64SetEnv(key string) map[int64]bool {
+	values := map[int64]bool{}
+	for _, part := range strings.Split(os.Getenv(key), ",") {
+		if parsed, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil {
+			values[parsed] = true
+		}
+	}
+	return values
 }

@@ -18,6 +18,8 @@ A Telegram bot for searching music links.
 Fill in `.env`:
 
 - `TELEGRAM_BOT_TOKEN`: token from Telegram BotFather.
+- `BOT_ADMIN_USER_IDS`: comma-separated Telegram user IDs that may use `/stats` and get alerts when YouTube blocks downloads.
+- `BOT_EVENTS_FILE`: file for metrics events (JSON Lines); empty turns metrics off. Docker Compose sets it to `/data/events.jsonl` on the `data` volume.
 - `BOT_YTDLP_AUTO_INSTALL`: set to `true` to let `go-ytdlp` install `yt-dlp` automatically when the bot starts. Docker sets this to `false` because `yt-dlp` is installed in the image.
 
 ## Run

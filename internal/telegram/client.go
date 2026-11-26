@@ -41,6 +41,12 @@ func (c *Client) SendMessage(ctx context.Context, request SendMessageRequest) (M
 	return result, err
 }
 
+func (c *Client) SendRichMessage(ctx context.Context, request SendRichMessageRequest) (Message, error) {
+	var result Message
+	err := c.post(ctx, "sendRichMessage", request, &result)
+	return result, err
+}
+
 func (c *Client) EditMessageText(ctx context.Context, request EditMessageTextRequest) error {
 	var result Message
 	return c.post(ctx, "editMessageText", request, &result)
@@ -252,6 +258,11 @@ type EditMessageTextRequest struct {
 	Text        string                `json:"text,omitempty"`
 	RichMessage *InputRichMessage     `json:"rich_message,omitempty"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+type SendRichMessageRequest struct {
+	ChatID      int64            `json:"chat_id"`
+	RichMessage InputRichMessage `json:"rich_message"`
 }
 
 type InputRichMessage struct {
