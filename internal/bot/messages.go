@@ -13,6 +13,10 @@ const (
 	msgNoResults      = "No links found for %q."
 	msgResults        = "Found results for %q:"
 
+	// Rich search results (rich.go).
+	msgRichResultsTitle = "%s..."
+	msgRichDownload     = "Download"
+
 	msgButtonEmpty   = "Nothing to do for this button."
 	msgButtonExpired = "This download button expired. Search again."
 	msgButtonStarted = "Starting download..."

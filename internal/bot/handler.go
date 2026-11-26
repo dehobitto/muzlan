@@ -121,6 +121,22 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 		return
 	}
 
+	// Telegram sometimes fails to fetch a YouTube thumbnail, so retry without them.
+	for _, thumbnails := range []bool{true, false} {
+		rich := richResults(query, results, thumbnails, func(result search.Result) string {
+			return h.buttons.put(result.URL, result.Label())
+		})
+		err = h.client.EditMessageText(ctx, telegram.EditMessageTextRequest{
+			ChatID:      status.Chat.ID,
+			MessageID:   status.MessageID,
+			RichMessage: &rich,
+		})
+		if err == nil {
+			return
+		}
+		h.logger.Printf("rich search results failed: thumbnails=%t error=%v", thumbnails, err)
+	}
+
 	text := fmt.Sprintf(msgResults, query)
 	h.editOrSend(ctx, status.Chat.ID, status.MessageID, text, h.keyboardForResults(userID, results))
 }
