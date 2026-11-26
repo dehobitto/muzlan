@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dehobitto/muzlan/internal/ratelimit"
@@ -210,7 +212,7 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 			if documentDownloadErr != nil {
 				h.logDownloadError(chatID, userID, videoURL, documentDownloadErr)
 			}
-			h.editOrSend(ctx, status.Chat.ID, status.MessageID, "Audio was downloaded, but Telegram upload failed. Please try again.", nil)
+			h.editOrSend(ctx, status.Chat.ID, status.MessageID, "Telegram upload failed. Please try again.", nil)
 			h.logger.Printf("telegram document stream upload failed: chat_id=%d user_id=%d error=%v", chatID, userID, documentUploadErr)
 			return
 		}
@@ -241,17 +243,15 @@ func (h *Handler) streamAudio(ctx context.Context, chatID int64, userID int64, v
 	metadata := audioMetadata(title, stream.Filename)
 
 	h.logger.Printf("telegram audio stream upload started: chat_id=%d user_id=%d filename=%q title=%q", chatID, userID, metadata.filename, metadata.title)
-	_, uploadErr := h.client.SendAudioStream(ctx, telegram.SendAudioStreamRequest{
-		ChatID:   chatID,
-		Audio:    stream.Reader,
-		Filename: metadata.filename,
-		Title:    metadata.title,
+	uploadErr, downloadErr := uploadStream(stream.Reader, stream, func(audio io.Reader) error {
+		_, err := h.client.SendAudioStream(ctx, telegram.SendAudioStreamRequest{
+			ChatID:   chatID,
+			Audio:    audio,
+			Filename: metadata.filename,
+			Title:    metadata.title,
+		})
+		return err
 	})
-	if uploadErr != nil {
-		_ = stream.Close()
-	}
-
-	downloadErr := stream.Wait()
 	if uploadErr == nil && downloadErr == nil {
 		h.logger.Printf("telegram audio stream upload finished: chat_id=%d user_id=%d", chatID, userID)
 	}
@@ -266,17 +266,49 @@ func (h *Handler) streamDocument(ctx context.Context, chatID int64, userID int64
 	metadata := audioMetadata(title, stream.Filename)
 
 	h.logger.Printf("telegram document stream upload started: chat_id=%d user_id=%d filename=%q title=%q", chatID, userID, metadata.filename, metadata.title)
-	_, uploadErr := h.client.SendDocumentStream(ctx, telegram.SendDocumentStreamRequest{
-		ChatID:   chatID,
-		Document: stream.Reader,
-		Filename: metadata.filename,
+	return uploadStream(stream.Reader, stream, func(document io.Reader) error {
+		_, err := h.client.SendDocumentStream(ctx, telegram.SendDocumentStreamRequest{
+			ChatID:   chatID,
+			Document: document,
+			Filename: metadata.filename,
+		})
+		return err
 	})
+}
+
+type downloadProcess interface {
+	Close() error
+	Wait() error
+}
+
+// uploadStream returns (uploadErr, downloadErr). A download that failed on its
+// own hides the upload error, because the upload only failed as a consequence.
+func uploadStream(reader io.Reader, process downloadProcess, upload func(io.Reader) error) (error, error) {
+	tracked := &eofReader{reader: reader}
+	uploadErr := upload(tracked)
 	if uploadErr != nil {
-		_ = stream.Close()
+		_ = process.Close()
 	}
 
-	downloadErr := stream.Wait()
+	downloadErr := process.Wait()
+	// Without EOF we closed the pipe ourselves, so the exit error may not be the cause.
+	if tracked.eof.Load() && downloadErr != nil {
+		return nil, downloadErr
+	}
 	return uploadErr, downloadErr
+}
+
+type eofReader struct {
+	reader io.Reader
+	eof    atomic.Bool
+}
+
+func (r *eofReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if err == io.EOF {
+		r.eof.Store(true)
+	}
+	return n, err
 }
 
 type streamMetadata struct {
@@ -370,7 +402,7 @@ func downloadErrorMessage(err error) string {
 		return "Download took too long and was stopped. Please try a shorter authorized video."
 	}
 
-	return "Could not download audio. Make sure this is your authorized video."
+	return "Could not download audio from YouTube. Please try again later."
 }
 
 func (h *Handler) logDownloadError(chatID int64, userID int64, videoURL string, err error) {
