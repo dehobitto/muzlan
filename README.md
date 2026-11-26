@@ -22,6 +22,8 @@ Fill in `.env`:
 
 ## Run
 
+Requires Go 1.27 or newer and Node.js.
+
 ```sh
 go run ./cmd/muzlan-bot
 ```
@@ -30,9 +32,9 @@ go run ./cmd/muzlan-bot
 
 The Docker image pins:
 
-- Go image: `golang:1.25.0-bookworm`
-- Runtime image with Node.js: `node:22.18.0-bookworm-slim`
-- `yt-dlp`: `2026.07.04`
+- Go image: `golang:1.27.4-bookworm`
+- Runtime image with Node.js: `node:26.13.1-bookworm-slim`
+- `yt-dlp`: `2026.11.23`
 
 ```sh
 docker compose up --build
