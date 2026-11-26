@@ -47,8 +47,6 @@ func NewHandler(cfg HandlerConfig, client *telegram.Client, searcher *search.Ser
 	}
 }
 
-const HelpText = "Send a song name to search. Tap a result to receive an MP3 for your authorized video."
-
 func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	if update.CallbackQuery != nil {
 		h.handleCallbackQuery(ctx, *update.CallbackQuery)
@@ -69,7 +67,7 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	if strings.HasPrefix(query, "/start") || strings.HasPrefix(query, "/help") {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
-			Text:   HelpText,
+			Text:   msgHelp,
 		})
 		return
 	}
@@ -82,7 +80,7 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	if len([]rune(query)) < h.cfg.QueryMinLength {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
-			Text:   fmt.Sprintf("Please send at least %d characters.", h.cfg.QueryMinLength),
+			Text:   fmt.Sprintf(msgQueryTooShort, h.cfg.QueryMinLength),
 		})
 		return
 	}
@@ -90,7 +88,7 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	if len([]rune(query)) > h.cfg.QueryMaxLength {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
-			Text:   fmt.Sprintf("Please keep the search under %d characters.", h.cfg.QueryMaxLength),
+			Text:   fmt.Sprintf(msgQueryTooLong, h.cfg.QueryMaxLength),
 		})
 		return
 	}
@@ -98,14 +96,14 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	if !h.limiter.Allow(userID) {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
-			Text:   "Please wait a moment before searching again.",
+			Text:   msgSearchCooldown,
 		})
 		return
 	}
 
 	status, err := h.client.SendMessage(ctx, telegram.SendMessageRequest{
 		ChatID: chatID,
-		Text:   "Got it. Searching links...",
+		Text:   msgSearching,
 	})
 	if err != nil {
 		h.logger.Printf("send status message: %v", err)
@@ -119,11 +117,11 @@ func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	}
 
 	if len(results) == 0 {
-		h.editOrSend(ctx, status.Chat.ID, status.MessageID, fmt.Sprintf("No links found for %q.", query), nil)
+		h.editOrSend(ctx, status.Chat.ID, status.MessageID, fmt.Sprintf(msgNoResults, query), nil)
 		return
 	}
 
-	text := fmt.Sprintf("Found results for %q:", query)
+	text := fmt.Sprintf(msgResults, query)
 	h.editOrSend(ctx, status.Chat.ID, status.MessageID, text, h.keyboardForResults(userID, results))
 }
 
@@ -131,7 +129,7 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.Cal
 	if callback.Data == "" {
 		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
 			CallbackQueryID: callback.ID,
-			Text:            "Nothing to do for this button.",
+			Text:            msgButtonEmpty,
 		})
 		return
 	}
@@ -140,7 +138,7 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.Cal
 	if !ok {
 		_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
 			CallbackQueryID: callback.ID,
-			Text:            "This download button expired. Search again.",
+			Text:            msgButtonExpired,
 			ShowAlert:       true,
 		})
 		return
@@ -148,7 +146,7 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.Cal
 
 	_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
 		CallbackQueryID: callback.ID,
-		Text:            "Starting MP3 conversion...",
+		Text:            msgButtonStarted,
 	})
 
 	if callback.Message == nil {
@@ -162,14 +160,14 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 	if enforceCooldown && !h.limiter.Allow(userID) {
 		_, _ = h.client.SendMessage(ctx, telegram.SendMessageRequest{
 			ChatID: chatID,
-			Text:   "Please wait a moment before starting another conversion.",
+			Text:   msgDownloadCooldown,
 		})
 		return
 	}
 
 	status, err := h.client.SendMessage(ctx, telegram.SendMessageRequest{
 		ChatID: chatID,
-		Text:   "Got it. Downloading audio...",
+		Text:   msgDownloading,
 	})
 	if err != nil {
 		h.logger.Printf("send conversion status message: %v", err)
@@ -185,7 +183,7 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 			h.logDownloadError(chatID, userID, videoURL, downloadErr)
 		}
 		h.logger.Printf("telegram audio stream upload failed, trying document stream: chat_id=%d user_id=%d error=%v", chatID, userID, uploadErr)
-		h.editOrSend(ctx, status.Chat.ID, status.MessageID, "Telegram did not accept it as audio. Sending as file...", nil)
+		h.editOrSend(ctx, status.Chat.ID, status.MessageID, msgSendingAsFile, nil)
 
 		documentCtx, documentCancel := context.WithTimeout(ctx, h.cfg.DownloadTimeout)
 		documentUploadErr, documentDownloadErr := h.streamDocument(documentCtx, chatID, userID, videoURL, title)
@@ -194,7 +192,7 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 			if documentDownloadErr != nil {
 				h.logDownloadError(chatID, userID, videoURL, documentDownloadErr)
 			}
-			h.editOrSend(ctx, status.Chat.ID, status.MessageID, "Telegram upload failed. Please try again.", nil)
+			h.editOrSend(ctx, status.Chat.ID, status.MessageID, msgUploadFailed, nil)
 			h.logger.Printf("telegram document stream upload failed: chat_id=%d user_id=%d error=%v", chatID, userID, documentUploadErr)
 			return
 		}
@@ -204,7 +202,7 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 			return
 		}
 		h.logger.Printf("telegram document upload finished: chat_id=%d user_id=%d", chatID, userID)
-		h.editOrSend(ctx, status.Chat.ID, status.MessageID, "Done. Sent audio file.", nil)
+		h.editOrSend(ctx, status.Chat.ID, status.MessageID, msgSentFile, nil)
 		return
 	}
 	if downloadErr != nil {
@@ -214,7 +212,7 @@ func (h *Handler) handleDownload(ctx context.Context, chatID int64, userID int64
 	}
 
 	h.logger.Printf("telegram audio upload finished: chat_id=%d user_id=%d", chatID, userID)
-	h.editOrSend(ctx, status.Chat.ID, status.MessageID, "Done. Sent audio.", nil)
+	h.editOrSend(ctx, status.Chat.ID, status.MessageID, msgSentAudio, nil)
 }
 
 func (h *Handler) streamAudio(ctx context.Context, chatID int64, userID int64, videoURL string, title string) (error, error) {
@@ -361,7 +359,7 @@ func (h *Handler) searchWithRetry(ctx context.Context, chatID int64, messageID i
 			break
 		}
 
-		h.editOrSend(ctx, chatID, messageID, "Search is slow. Retrying once...", nil)
+		h.editOrSend(ctx, chatID, messageID, msgSearchRetry, nil)
 	}
 
 	return nil, lastErr
@@ -376,15 +374,15 @@ func shouldRetry(err error) bool {
 }
 
 func errorMessage(err error) string {
-	return "Could not search links right now. Please try again in a minute."
+	return msgSearchFailed
 }
 
 func downloadErrorMessage(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return "Download took too long and was stopped. Please try a shorter authorized video."
+		return msgDownloadTimeout
 	}
 
-	return "Could not download audio from YouTube. Please try again later."
+	return msgDownloadFailed
 }
 
 func (h *Handler) logDownloadError(chatID int64, userID int64, videoURL string, err error) {

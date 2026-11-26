@@ -67,7 +67,7 @@ func TestHandleUpdateReplies(t *testing.T) {
 		updates []telegram.Update
 		want    string
 	}{
-		{name: "help", updates: []telegram.Update{message("/start")}, want: HelpText},
+		{name: "help", updates: []telegram.Update{message("/start")}, want: msgHelp},
 		{name: "short query", updates: []telegram.Update{message("ab")}, want: "Please send at least 3 characters."},
 		{name: "long query", updates: []telegram.Update{message("abcdefghijk")}, want: "Please keep the search under 10 characters."},
 		{name: "no results", updates: []telegram.Update{message("song")}, want: `No links found for "song".`},
