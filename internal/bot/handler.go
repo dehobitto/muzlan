@@ -47,7 +47,7 @@ func NewHandler(cfg HandlerConfig, client *telegram.Client, searcher *search.Ser
 	}
 }
 
-const HelpText = "Send a song name to search. Tap a result to receive an MP3 for your authorized video."
+const HelpText = "Send a song name or a YouTube link. Tap a result to get the audio file."
 
 func (h *Handler) HandleUpdate(ctx context.Context, update telegram.Update) {
 	if update.CallbackQuery != nil {
@@ -148,7 +148,7 @@ func (h *Handler) handleCallbackQuery(ctx context.Context, callback telegram.Cal
 
 	_ = h.client.AnswerCallbackQuery(ctx, telegram.AnswerCallbackQueryRequest{
 		CallbackQueryID: callback.ID,
-		Text:            "Starting MP3 conversion...",
+		Text:            "Starting download...",
 	})
 
 	if callback.Message == nil {
@@ -381,7 +381,7 @@ func errorMessage(err error) string {
 
 func downloadErrorMessage(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return "Download took too long and was stopped. Please try a shorter authorized video."
+		return "Download took too long and was stopped. Please try a shorter video."
 	}
 
 	return "Could not download audio from YouTube. Please try again later."
