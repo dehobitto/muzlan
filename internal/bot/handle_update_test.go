@@ -23,17 +23,32 @@ type stubSearch []search.Result
 
 func (s stubSearch) Search(context.Context, string, int) ([]search.Result, error) { return s, nil }
 
-// newTestHandler returns a handler and the texts it sends to Telegram.
-func newTestHandler(results []search.Result) (*Handler, *[]string) {
+// newTestHandler returns a handler and the texts (or rich HTML) it sends to
+// Telegram. With rejectRich, Telegram answers rich messages with an error;
+// with rejectImages, only rich messages that contain an image.
+func newTestHandler(results []search.Result, rejectRich bool, rejectImages bool) (*Handler, *[]string) {
 	texts := &[]string{}
 	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var body struct {
-			Text string `json:"text"`
+			Text        string `json:"text"`
+			RichMessage *struct {
+				HTML string `json:"html"`
+			} `json:"rich_message"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			return nil, err
 		}
-		*texts = append(*texts, body.Text)
+		if body.RichMessage != nil {
+			*texts = append(*texts, body.RichMessage.HTML)
+			if rejectRich || (rejectImages && strings.Contains(body.RichMessage.HTML, "<img")) {
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Body:       io.NopCloser(strings.NewReader(`{"ok":false,"error_code":400,"description":"Bad Request"}`)),
+				}, nil
+			}
+		} else {
+			*texts = append(*texts, body.Text)
+		}
 
 		result := `{"message_id":1,"chat":{"id":7}}`
 		if strings.HasSuffix(r.URL.Path, "/answerCallbackQuery") {
@@ -62,16 +77,20 @@ func message(text string) telegram.Update {
 
 func TestHandleUpdateReplies(t *testing.T) {
 	tests := []struct {
-		name    string
-		results []search.Result
-		updates []telegram.Update
-		want    string
+		name         string
+		results      []search.Result
+		rejectRich   bool
+		rejectImages bool
+		updates      []telegram.Update
+		want         string
 	}{
 		{name: "help", updates: []telegram.Update{message("/start")}, want: msgHelp},
 		{name: "short query", updates: []telegram.Update{message("ab")}, want: "Please send at least 3 characters."},
 		{name: "long query", updates: []telegram.Update{message("abcdefghijk")}, want: "Please keep the search under 10 characters."},
 		{name: "no results", updates: []telegram.Update{message("song")}, want: `No links found for "song".`},
-		{name: "results", results: []search.Result{{Title: "t", URL: "u"}}, updates: []telegram.Update{message("song")}, want: `Found results for "song":`},
+		{name: "rich results", results: []search.Result{{Title: "t", URL: "u", Thumbnail: "https://x/t.jpg"}}, updates: []telegram.Update{message("song")}, want: `<table bordered><tr><td align="center">&nbsp;<br><b>song...</b><br>&nbsp;</td></tr></table><img`},
+		{name: "no thumbnails when they are rejected", results: []search.Result{{Title: "t", URL: "u", Thumbnail: "https://x/t.jpg"}}, rejectImages: true, updates: []telegram.Update{message("song")}, want: `<table bordered><tr><td align="center">&nbsp;<br><b>song...</b><br>&nbsp;</td></tr></table><table bordered><tr><td>01</td><td><b>t</b></td>`},
+		{name: "plain results when rich is rejected", results: []search.Result{{Title: "t", URL: "u"}}, rejectRich: true, updates: []telegram.Update{message("song")}, want: `Found results for "song":`},
 		{name: "cooldown", updates: []telegram.Update{message("song"), message("song")}, want: "Please wait a moment before searching again."},
 		{
 			name:    "expired button",
@@ -82,11 +101,11 @@ func TestHandleUpdateReplies(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			handler, texts := newTestHandler(test.results)
+			handler, texts := newTestHandler(test.results, test.rejectRich, test.rejectImages)
 			for _, update := range test.updates {
 				handler.HandleUpdate(context.Background(), update)
 			}
-			if len(*texts) == 0 || (*texts)[len(*texts)-1] != test.want {
+			if len(*texts) == 0 || !strings.HasPrefix((*texts)[len(*texts)-1], test.want) {
 				t.Fatalf("expected last reply %q, got %q", test.want, *texts)
 			}
 		})

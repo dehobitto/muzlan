@@ -249,8 +249,26 @@ type SendMessageRequest struct {
 type EditMessageTextRequest struct {
 	ChatID      int64                 `json:"chat_id"`
 	MessageID   int                   `json:"message_id"`
-	Text        string                `json:"text"`
+	Text        string                `json:"text,omitempty"`
+	RichMessage *InputRichMessage     `json:"rich_message,omitempty"`
 	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+}
+
+type InputRichMessage struct {
+	HTML  string                  `json:"html"`
+	Media []InputRichMessageMedia `json:"media,omitempty"`
+}
+
+// InputRichMessageMedia is referenced from HTML as tg://photo?id=<ID>.
+// Editing a message rejects plain https image URLs, but accepts them here.
+type InputRichMessageMedia struct {
+	ID    string     `json:"id"`
+	Media InputMedia `json:"media"`
+}
+
+type InputMedia struct {
+	Type  string `json:"type"`
+	Media string `json:"media"`
 }
 
 type AnswerCallbackQueryRequest struct {

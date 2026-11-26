@@ -22,9 +22,11 @@ type Provider interface {
 }
 
 type Result struct {
-	Title   string
-	Creator string
-	URL     string
+	Title     string
+	Creator   string
+	URL       string
+	Thumbnail string
+	Duration  time.Duration
 }
 
 func (r Result) Label() string {
